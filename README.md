@@ -2,9 +2,9 @@
 
 Frieve Mouse Bench is an app for easily evaluating mouse performance on your browser.
 
-[> Open App](https://frieve-a.github.io/mouse‗bench/mouse‗bench.html)
+[> Open App](https://frieve-a.github.io/mouse_bench/mouse_bench.html)
 
-![Screenshot](mouse‗bench.png)
+![Screenshot](mouse_bench.png)
 
 - Enter the mouse name (optional) in the input field above and click "Start Test".
 - Move your mouse close to the displayed circle. Once you are within range, the 5-second measurement automatically starts.
@@ -22,9 +22,9 @@ Frieve Mouse Bench is an app for easily evaluating mouse performance on your bro
 
 Frieve Mouse Benchはブラウザ上でマウスの性能を簡易評価するためのアプリです。
 
-[> アプリを開く](https://frieve-a.github.io/mouse‗bench/mouse‗bench‗ja.html)
+[> アプリを開く](https://frieve-a.github.io/mouse_bench/mouse_bench_ja.html)
 
-![Screenshot](mouse‗bench‗ja.png)
+![Screenshot](mouse_bench_ja.png)
 
 
 - このアプリはマウスの性能を簡単に評価するためのものです。
