@@ -1,0 +1,703 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Frieve Mouse Bench</title>
+  <link rel="manifest" href="manifest.json">
+  <style>
+    html, body {
+      margin: 0;
+      padding: 0;
+      background-color: #121212;
+      color: #e0e0e0;
+      font-family: sans-serif;
+      overflow: auto;
+      width: 100%;
+      height: 100%;
+      display: block;
+    }
+    h1 {
+      margin-top: 20px;
+      font-size: 32px;
+      color: #fff;
+      text-align: center;
+    }
+    #controlPanel,
+    #modePanel,
+    #clipboardPanel {
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      gap: 10px;
+      margin-top: 10px;
+    }
+    input, button, select {
+      background-color: #333;
+      color: #e0e0e0;
+      border: 1px solid #555;
+      padding: 5px 10px;
+      font-size: 18px;
+    }
+    button:hover {
+      background-color: #444;
+    }
+    /* Canvas is displayed at 640×480, but internally 1280×960. */
+    #canvasContainer {
+      margin: 20px auto 0 auto;
+      position: relative;
+      width: 640px;
+      height: 480px;
+      background-color: #1f1f1f;
+      border: 1px solid #555;
+    }
+    #testCanvas, #resultCanvas {
+      position: absolute;
+      left: 0;
+      top: 0;
+      width: 640px;
+      height: 480px;
+      display: block;
+    }
+    #testCanvas {
+      width: 640px;
+      height: 480px;
+    }
+    #testCanvas[width] {
+      width: 640px;
+    }
+    #testCanvas[height] {
+      height: 480px;
+    }
+    #resultCanvas {
+      display: none;
+      width: 640px;
+      height: 480px;
+    }
+    #resultCanvas[width] {
+      width: 640px;
+    }
+    #resultCanvas[height] {
+      height: 480px;
+    }
+
+    /* Progress bar at the bottom of container */
+    #progressContainer {
+      position: absolute;
+      left: 50%;
+      transform: translateX(-50%);
+      bottom: 10px;
+      width: 60%;
+      height: 16px;
+      background-color: #333;
+      border: 1px solid #555;
+      display: none;
+    }
+    #progressBar {
+      background-color: #00bcd4;
+      height: 100%;
+      width: 0%;
+    }
+    #progressText {
+      position: absolute;
+      top: -20px;
+      left: 0; right: 0;
+      text-align: center;
+      font-size: 14px;
+      color: #fff;
+      display: none;
+    }
+    #explanations {
+      margin: 20px auto;
+      width: 640px;
+      max-width: 640px;
+      line-height: 1.6;
+      font-size: 16px;
+    }
+  </style>
+</head>
+<body>
+
+<h1>Frieve Mouse Bench</h1>
+
+<div id="controlPanel">
+  <input type="text" id="mouseName" placeholder="Mouse Name">
+  <button id="startTestBtn">Start Test</button>
+</div>
+
+<div id="modePanel">
+  <label for="pointerMode">Pointer Mode:</label>
+  <select id="pointerMode">
+    <option value="auto">Auto detect</option>
+    <option value="pointerrawupdate">pointerrawupdate</option>
+    <option value="mousemove">mousemove</option>
+  </select>
+</div>
+
+<div id="canvasContainer">
+  <canvas id="testCanvas" width="1280" height="960"></canvas>
+  <canvas id="resultCanvas" width="1280" height="960"></canvas>
+  <div id="progressContainer">
+    <div id="progressBar"></div>
+    <div id="progressText">0%</div>
+  </div>
+</div>
+
+<div id="clipboardPanel">
+  <button id="copyImgBtn" style="display:none;">Copy to Clipboard (Image)</button>
+  <button id="copyTxtBtn" style="display:none;">Copy to Clipboard (Text)</button>
+</div>
+
+<!-- User explanation in bullet points -->
+<div id="explanations">
+  <ul>
+    <li>This app provides a simple way to evaluate mouse performance.</li>
+    <li>Enter the mouse name (optional) in the input field above and click "Start Test".</li>
+    <li>Move your mouse close to the displayed circle. Once you are within range, the 5-second measurement automatically starts.</li>
+    <li>When measurement is complete, the results will appear.</li>
+    <li>The results include:
+      <ul>
+        <li>Polling Rate (the higher, the better)</li>
+        <li>Event Timing Standard Deviation (the smaller, the better)</li>
+        <li>Count of Sign Reversals in Velocity (the fewer, the better)</li>
+        <li>Mouse trajectory</li>
+        <li>Two types of velocity graphs</li>
+      </ul>
+    </li>
+    <li>You can copy the results as an image or text using the buttons at the bottom once measurement finishes.</li>
+    <li>Try different mice or environments for varying outcomes.</li>
+  </ul>
+</div>
+
+<script>
+const SCALE=2;
+const testCanvas= document.getElementById('testCanvas');
+const resultCanvas= document.getElementById('resultCanvas');
+const ctxTest= testCanvas.getContext('2d');
+const ctxResult= resultCanvas.getContext('2d');
+
+const startTestBtn= document.getElementById('startTestBtn');
+const mouseNameInput= document.getElementById('mouseName');
+const pointerModeSelect= document.getElementById('pointerMode');
+const copyImgBtn= document.getElementById('copyImgBtn');
+const copyTxtBtn= document.getElementById('copyTxtBtn');
+
+const progressContainer= document.getElementById('progressContainer');
+const progressBar= document.getElementById('progressBar');
+const progressText= document.getElementById('progressText');
+
+let isTestRunning=false;
+let isMeasuring=false;
+let isTestFinished=false;
+let measureStartTime=0;
+const measureDuration=5;
+let mouseData=[];
+let recordedMouseName='';
+let measurementDateTime='';
+let animationId;
+let usingPointerMode='auto';
+let finalPollingRate=0;
+let finalTimingStd=0;
+
+// Velocity sign reversal counts (X,Y)
+let signFlipsX=0;
+let signFlipsY=0;
+
+const rotationsPerSecond=1;
+const velMin=-3000;
+const velMax=3000;
+
+/** clamp */
+function clamp(v,minVal,maxVal){
+  return Math.max(minVal, Math.min(maxVal,v));
+}
+
+function drawTestScene(timestamp){
+  if(!isTestRunning)return;
+  const nowSec= timestamp/1000;
+  const angle= nowSec* rotationsPerSecond*2*Math.PI;
+
+  ctxTest.clearRect(0,0, testCanvas.width,testCanvas.height);
+  const shortSide= Math.min(testCanvas.width,testCanvas.height);
+  const circleRadius= (shortSide*0.8)/2;
+  const cx= testCanvas.width/2;
+  const cy= testCanvas.height/2;
+
+  ctxTest.fillStyle='#e0e0e0';
+  ctxTest.font='24px sans-serif';
+  if(!isMeasuring){
+    ctxTest.fillText('Follow the little red circle with your mouse cursor.',80,60);
+    ctxTest.fillText('(Within 64px => start)',80,92);
+  } else {
+    ctxTest.fillText('Measuring... Keep tracking the little red circle.',80,60);
+    if(usingPointerMode==='mousemove'){
+      ctxTest.fillStyle='red';
+      ctxTest.font='24px sans-serif';
+      ctxTest.fillText('(Reference only: mousemove)',80,92);
+    }
+  }
+
+  // Big circle
+  ctxTest.beginPath();
+  ctxTest.lineWidth=4;
+  ctxTest.strokeStyle='#00bcd4';
+  ctxTest.arc(cx,cy,circleRadius,0,2*Math.PI);
+  ctxTest.stroke();
+  ctxTest.closePath();
+
+  // Small circle => radius=20
+  const smallCircleX= cx + circleRadius*Math.cos(angle);
+  const smallCircleY= cy + circleRadius*Math.sin(angle);
+  ctxTest.beginPath();
+  ctxTest.arc(smallCircleX, smallCircleY, 20,0,2*Math.PI);
+  ctxTest.fillStyle='#ff4081';
+  ctxTest.fill();
+  ctxTest.closePath();
+
+  // Progress
+  if(isMeasuring){
+    const elapsed=(performance.now()-measureStartTime)/1000;
+    const prog= Math.min((elapsed/measureDuration)*100,100);
+    progressBar.style.width= prog.toFixed(2)+'%';
+    progressText.textContent= prog.toFixed(0)+'%';
+    if(elapsed>= measureDuration){
+      endMeasurement();
+    }
+  }
+
+  if(!isTestFinished){
+    animationId= requestAnimationFrame(drawTestScene);
+  }
+}
+
+function startMeasurement(){
+  if(!isMeasuring){
+    isMeasuring=true;
+    measureStartTime= performance.now();
+    mouseData=[];
+    progressContainer.style.display='block';
+    progressText.style.display='block';
+    progressBar.style.width='0%';
+    progressText.textContent='0%';
+  }
+}
+function endMeasurement(){
+  isMeasuring=false;
+  isTestRunning=false;
+  isTestFinished=true;
+  cancelAnimationFrame(animationId);
+  progressContainer.style.display='none';
+  displayResults();
+}
+
+function startTest(){
+  isTestRunning=true;
+  isTestFinished=false;
+  isMeasuring=false;
+  mouseData=[];
+
+  recordedMouseName= mouseNameInput.value || 'Unknown Mouse';
+  measurementDateTime= new Date().toLocaleString();
+
+  testCanvas.style.display='block';
+  resultCanvas.style.display='none';
+  copyImgBtn.style.display='none';
+  copyTxtBtn.style.display='none';
+  startTestBtn.textContent='Start Test';
+
+  const sel= pointerModeSelect.value;
+  if(sel==='auto'){
+    if('onpointerrawupdate' in window){
+      usingPointerMode='pointerrawupdate';
+    } else {
+      usingPointerMode='mousemove';
+    }
+  } else if(sel==='pointerrawupdate'){
+    if('onpointerrawupdate' in window){
+      usingPointerMode='pointerrawupdate';
+    } else {
+      usingPointerMode='mousemove';
+    }
+  } else {
+    usingPointerMode='mousemove';
+  }
+  window.removeEventListener('pointerrawupdate', handlePointerRawUpdate);
+  window.removeEventListener('mousemove', handleMouseMove);
+
+  if(usingPointerMode==='pointerrawupdate'){
+    window.addEventListener('pointerrawupdate', handlePointerRawUpdate, {passive:true});
+  } else {
+    window.addEventListener('mousemove', handleMouseMove, {passive:true});
+  }
+  animationId= requestAnimationFrame(drawTestScene);
+}
+
+/* coords => scale by 2 */
+function handlePointerRawUpdate(e){
+  if(!isTestRunning||isTestFinished)return;
+  const rect=testCanvas.getBoundingClientRect();
+  const mx=(e.clientX - rect.left)*SCALE;
+  const my=(e.clientY - rect.top)*SCALE;
+
+  // On-screen 64px => internal double scale => 128
+  if(!isMeasuring){
+    const shortSide= Math.min(testCanvas.width,testCanvas.height);
+    const circleRadius=(shortSide*0.8)/2;
+    const cx= testCanvas.width/2;
+    const cy= testCanvas.height/2;
+    const angle= performance.now()/1000* rotationsPerSecond*2*Math.PI;
+    const sx= cx + circleRadius*Math.cos(angle);
+    const sy= cy + circleRadius*Math.sin(angle);
+    if(Math.hypot(mx-sx,my-sy)<=128){
+      startMeasurement();
+    }
+  }
+  if(isMeasuring){
+    mouseData.push({x:mx,y:my,t:performance.now()});
+  }
+}
+function handleMouseMove(e){
+  if(!isTestRunning||isTestFinished)return;
+  const rect=testCanvas.getBoundingClientRect();
+  const mx=(e.clientX - rect.left)*SCALE;
+  const my=(e.clientY - rect.top)*SCALE;
+
+  if(!isMeasuring){
+    const shortSide= Math.min(testCanvas.width,testCanvas.height);
+    const circleRadius=(shortSide*0.8)/2;
+    const cx= testCanvas.width/2;
+    const cy= testCanvas.height/2;
+    const angle= performance.now()/1000* rotationsPerSecond*2*Math.PI;
+    const sx= cx + circleRadius*Math.cos(angle);
+    const sy= cy + circleRadius*Math.sin(angle);
+    if(Math.hypot(mx-sx,my-sy)<=128){
+      startMeasurement();
+    }
+  }
+  if(isMeasuring){
+    mouseData.push({x:mx,y:my,t:performance.now()});
+  }
+}
+
+// Gaussian smoothing -> velocity array
+function computeVelocitiesGaussian(events, chunkMs=20, sigmaMs=10){
+  if(events.length<2)return [];
+  const velocities=[];
+  const startTime= events[0].t;
+  const endTime= events[events.length-1].t;
+  let c= startTime+ chunkMs/2;
+  while(c<=endTime){
+    let sumWx=0,sumWy=0,sumW=0;
+    for(let e of events){
+      const dt=e.t- c;
+      const w=Math.exp(-(dt*dt)/(2*sigmaMs*sigmaMs));
+      sumWx+= e.x*w;
+      sumWy+= e.y*w;
+      sumW+= w;
+    }
+    const xAvg= sumW>0?(sumWx/sumW):0;
+    const yAvg= sumW>0?(sumWy/sumW):0;
+    velocities.push({x:xAvg,y:yAvg,time:c});
+    c+=chunkMs;
+  }
+
+  // Convert to velocities (multiply by 1/SCALE)
+  const velArray=[];
+  for(let i=0;i<velocities.length-1;i++){
+    const t1= velocities[i].time;
+    const t2= velocities[i+1].time;
+    const dtSec=(t2 - t1)/1000;
+    if(dtSec<=0) continue;
+
+    const dx= (velocities[i+1].x - velocities[i].x) / SCALE;
+    const dy= (velocities[i+1].y - velocities[i].y) / SCALE;
+    const vx= dx / dtSec;
+    const vy= dy / dtSec;
+    velArray.push({vx,vy,time:(t1+t2)/2});
+  }
+  return velArray;
+}
+
+// Count sign reversals
+function countSignReversals(velArray){
+  if(velArray.length<2) return {xFlips:0, yFlips:0};
+  let xFlips=0, yFlips=0;
+  let prevXSign= (velArray[0].vx>=0)?1:-1;
+  let prevYSign= (velArray[0].vy>=0)?1:-1;
+
+  for(let i=1; i<velArray.length; i++){
+    let currentXSign= (velArray[i].vx>=0)?1:-1;
+    let currentYSign= (velArray[i].vy>=0)?1:-1;
+    if(currentXSign !== prevXSign) xFlips++;
+    if(currentYSign !== prevYSign) yFlips++;
+    prevXSign= currentXSign;
+    prevYSign= currentYSign;
+  }
+  return {xFlips, yFlips};
+}
+
+// Dispersion of event intervals
+function computeTimingStdDev(events, pollingRate){
+  if(events.length<2)return 0;
+  const dtArr=[];
+  for(let i=1;i<events.length;i++){
+    const dtSec= (events[i].t - events[i-1].t)/1000;
+    dtArr.push(dtSec);
+  }
+  const normDT= dtArr.map(d=> d* pollingRate);
+  const mean= normDT.reduce((a,b)=>a+b,0)/ normDT.length;
+  const variance= normDT.reduce((a,b)=>(a+(b-mean)**2),0)/ normDT.length;
+  return Math.sqrt(variance);
+}
+
+function displayResults(){
+  testCanvas.style.display='none';
+  resultCanvas.style.display='block';
+  copyImgBtn.style.display='inline-block';
+  copyTxtBtn.style.display='inline-block';
+  startTestBtn.textContent='Retest';
+
+  const ctx= resultCanvas.getContext('2d');
+  ctx.clearRect(0,0,resultCanvas.width,resultCanvas.height);
+
+  // Background
+  ctx.fillStyle='#1f1f1f';
+  ctx.fillRect(0,0,resultCanvas.width,resultCanvas.height);
+
+  // Statistical calculations
+  const totalEvents= mouseData.length;
+  const pollingRate= totalEvents/ measureDuration;
+  const timingStd= computeTimingStdDev(mouseData,pollingRate);
+  finalPollingRate= pollingRate;
+  finalTimingStd= timingStd;
+
+  // Margins
+  const w= resultCanvas.width;  //1280
+  const h= resultCanvas.height; //960
+  const marginLeft= 80;
+  const marginRight=80;
+  const marginTop= 60;
+  const marginBottom=60;
+
+  // === Upper text ===
+  ctx.font='24px sans-serif';
+  ctx.fillStyle='#e0e0e0';
+  let textY= marginTop;
+
+  ctx.fillText(`Mouse Name: ${recordedMouseName}`, marginLeft, textY);
+  textY += 32;
+  const pointerLine= `Measured in ${usingPointerMode} mode at ${measurementDateTime}`;
+  ctx.fillText(pointerLine, marginLeft, textY);
+  textY += 32;
+  ctx.fillText(`Polling Rate: ${pollingRate.toFixed(1)} events/sec`, marginLeft, textY);
+  textY += 32;
+  ctx.fillText(`Timing Std Dev: ${timingStd.toFixed(4)}`, marginLeft, textY);
+  textY += 32;
+
+  // Compute velocities
+  const velocities= computeVelocitiesGaussian(mouseData,20,10);
+
+  // Velocity sign reversals
+  const {xFlips, yFlips} = countSignReversals(velocities);
+  signFlipsX = xFlips;
+  signFlipsY = yFlips;
+
+  // Display sign reversal counts
+  ctx.font='24px sans-serif';
+  ctx.fillText(`Sign Reversals (X velocity): ${xFlips}`, marginLeft, textY);
+  textY += 32;
+  ctx.fillText(`Sign Reversals (Y velocity): ${yFlips}`, marginLeft, textY);
+  textY += 32;
+
+  // === Graph area ===
+  const graphTop= textY + 24; 
+  const graphLeft= marginLeft;
+  const graphRight= w - marginRight;
+  const graphBottom= h - marginBottom;
+  const graphWidth= graphRight - graphLeft;
+  const graphHeight= graphBottom - graphTop;
+
+  // Graph background
+  ctx.fillStyle='#222';
+  ctx.fillRect(graphLeft, graphTop, graphWidth, graphHeight);
+
+  // Axis scale
+  const timeMax= 5; // 0..5 seconds
+  function timeToX(t){
+    const frac = t / timeMax;
+    return graphLeft + frac * graphWidth;
+  }
+  function velToY(v){
+    // v is -3000..3000
+    const frac = (v - velMin) / (velMax - velMin);
+    return graphBottom - frac * graphHeight;
+  }
+
+  // Grid
+  ctx.strokeStyle='#444';
+  ctx.lineWidth=2;
+  ctx.beginPath();
+  // Vertical lines => 1..4 seconds
+  for(let i=1; i<5; i++){
+    const xPos= timeToX(i);
+    ctx.moveTo(xPos, graphTop);
+    ctx.lineTo(xPos, graphBottom);
+  }
+  // Horizontal lines => velocity -3000..3000
+  for(let v=-3000; v<=3000; v+=1000){
+    const yPos= velToY(v);
+    ctx.moveTo(graphLeft, yPos);
+    ctx.lineTo(graphRight, yPos);
+  }
+  ctx.stroke();
+  ctx.closePath();
+
+  // velocity=0 line
+  ctx.beginPath();
+  const zeroY= velToY(0);
+  ctx.moveTo(graphLeft, zeroY);
+  ctx.lineTo(graphRight, zeroY);
+  ctx.strokeStyle='#fff';
+  ctx.stroke();
+  ctx.closePath();
+
+  // Velocity lines (X = pink / Y = cyan)
+  ctx.lineWidth=2;
+  for(let i=0; i<velocities.length-1; i++){
+    const v1= velocities[i];
+    const v2= velocities[i+1];
+    const t1s= (v1.time - velocities[0].time)/1000; 
+    const t2s= (v2.time - velocities[0].time)/1000;
+    const x1= timeToX( clamp(t1s,0,timeMax) );
+    const x2= timeToX( clamp(t2s,0,timeMax) );
+
+    const vx1= clamp(v1.vx, velMin, velMax);
+    const vx2= clamp(v2.vx, velMin, velMax);
+    const vy1= clamp(v1.vy, velMin, velMax);
+    const vy2= clamp(v2.vy, velMin, velMax);
+
+    // X velocity => pink
+    ctx.beginPath();
+    ctx.strokeStyle='#ff4081';
+    ctx.moveTo(x1, velToY(vx1));
+    ctx.lineTo(x2, velToY(vx2));
+    ctx.stroke();
+    ctx.closePath();
+
+    // Y velocity => cyan
+    ctx.beginPath();
+    ctx.strokeStyle='#40c4ff';
+    ctx.moveTo(x1, velToY(vy1));
+    ctx.lineTo(x2, velToY(vy2));
+    ctx.stroke();
+    ctx.closePath();
+  }
+
+  // Axis labels
+  ctx.font='24px sans-serif';
+  ctx.fillStyle='#e0e0e0';
+  ctx.fillText('Time(s), Velocity(px/s)', graphRight-380, graphBottom-24);
+
+  // Axis ticks (x=0..5, y=-3000..3000)
+  ctx.font='24px sans-serif';
+  for(let i=0; i<=5; i++){
+    const xx= timeToX(i);
+    ctx.fillText(`${i}`, xx-10, graphBottom+30);
+  }
+  for(let v=-3000; v<=3000; v+=1000){
+    const yy= velToY(v);
+    ctx.fillText(`${v}`, graphLeft-60, yy+8);
+  }
+
+  // === Legend near bottom ===
+  const legendMarginFromBottom = 24;
+  const legendBase = graphBottom - legendMarginFromBottom;
+  const legendLineGap = 40;
+
+  // X Velocity
+  ctx.font='24px sans-serif';
+  ctx.fillStyle='#ff4081';
+  ctx.fillText('X Velocity', graphLeft+80, legendBase);
+  ctx.beginPath();
+  ctx.moveTo(graphLeft+40, legendBase - 10);
+  ctx.lineTo(graphLeft+60, legendBase - 10);
+  ctx.lineWidth=4;
+  ctx.strokeStyle='#ff4081';
+  ctx.stroke();
+  ctx.closePath();
+
+  // Y Velocity
+  ctx.fillStyle='#40c4ff';
+  const secondLineY = legendBase - legendLineGap;
+  ctx.fillText('Y Velocity', graphLeft+80, secondLineY);
+  ctx.beginPath();
+  ctx.moveTo(graphLeft+40, secondLineY - 10);
+  ctx.lineTo(graphLeft+60, secondLineY - 10);
+  ctx.lineWidth=4;
+  ctx.strokeStyle='#40c4ff';
+  ctx.stroke();
+  ctx.closePath();
+
+  // === Mouse trajectory (full 1280×960) ===
+  drawMouseTrajectory(ctx, mouseData);
+}
+
+function drawMouseTrajectory(ctx, events){
+  if(events.length>1){
+    // Faint line
+    ctx.beginPath();
+    ctx.strokeStyle='rgba(255,215,0,0.3)';
+    ctx.lineWidth=2;
+    for(let i=0; i<events.length-1; i++){
+      ctx.moveTo(events[i].x, events[i].y);
+      ctx.lineTo(events[i+1].x, events[i+1].y);
+    }
+    ctx.stroke();
+    ctx.closePath();
+
+    // Small crosses
+    ctx.strokeStyle='#ffd700';
+    ctx.lineWidth=2;
+    for(let i=0;i<events.length;i++){
+      const px=events[i].x, py=events[i].y;
+      ctx.beginPath();
+      ctx.moveTo(px-1, py);
+      ctx.lineTo(px+1, py);
+      ctx.stroke();
+      ctx.closePath();
+      ctx.beginPath();
+      ctx.moveTo(px, py-1);
+      ctx.lineTo(px, py+1);
+      ctx.stroke();
+      ctx.closePath();
+    }
+  }
+}
+
+copyImgBtn.addEventListener('click',()=>{
+  resultCanvas.toBlob((blob)=>{
+    if(navigator.clipboard && blob){
+      const item=new ClipboardItem({'image/png':blob});
+      navigator.clipboard.write([item]);
+    }
+  });
+});
+copyTxtBtn.addEventListener('click',()=>{
+  const pointerLine= `Measured in ${usingPointerMode} mode at ${measurementDateTime}`;
+  const textToCopy=
+    `Mouse Name: ${recordedMouseName}\n` +
+    `${pointerLine}\n` +
+    `Polling Rate: ${finalPollingRate.toFixed(1)} events/sec\n` +
+    `Timing Std Dev: ${finalTimingStd.toFixed(4)}\n` +
+    `Sign Reversals (X velocity): ${signFlipsX}\n` +
+    `Sign Reversals (Y velocity): ${signFlipsY}\n` +
+    `Frieve #MouseBench`;
+  navigator.clipboard.writeText(textToCopy);
+});
+
+startTestBtn.addEventListener('click',()=>{
+  startTest();
+});
+</script>
+
+</body>
+</html>
